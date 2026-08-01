@@ -1,50 +1,90 @@
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
-import { env, corsOrigins } from "./config/env";
-import { errorHandler, requireApiKey } from "./middleware/errorHandler";
-import { kpisRouter } from "./routes/kpis";
-import { pipelineRouter } from "./routes/pipeline";
-import { conversationsRouter } from "./routes/conversations";
-import { activityRouter } from "./routes/activity";
-import { webhooksRouter } from "./routes/webhooks";
-import { startScheduler } from "./cron/scheduler";
+export type LeadStatus =
+  | "new"
+  | "pitched"
+  | "replied"
+  | "interested"
+  | "meeting"
+  | "closed"
+  | "unsubscribed";
 
-const app = express();
+export interface Lead {
+  id: string;
+  place_id: string | null;
+  name: string;
+  area: string;
+  category: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  has_website: boolean;
+  status: LeadStatus;
+  source: string;
+  unsubscribe_token: string;
+  created_at: string;
+  updated_at: string;
+}
 
-app.use(helmet());
-app.use(
-  cors({
-    origin: corsOrigins.length > 0 ? corsOrigins : false,
-  })
-);
-app.use(express.json({ limit: "1mb" }));
+export type MessageDirection = "outbound" | "inbound";
+export type MessageChannel = "email" | "sms";
 
-// Basic abuse protection on top of the dashboard API key.
-const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120 });
-app.use("/api", apiLimiter);
+export interface Message {
+  id: string;
+  lead_id: string;
+  direction: MessageDirection;
+  channel: MessageChannel;
+  subject: string | null;
+  body: string;
+  provider_message_id: string | null;
+  sent_at: string;
+}
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, env: env.NODE_ENV });
-});
+export type EventType =
+  | "lead_discovered"
+  | "email_sent"
+  | "email_delivered"
+  | "email_bounced"
+  | "reply_received"
+  | "classified"
+  | "status_changed"
+  | "unsubscribed"
+  | "suppressed_skip"
+  | "rate_limit_hit"
+  | "error";
 
-// Public routes: inbound reply webhook (signature-verified) + unsubscribe link
-// (must be reachable directly from an email client, so it stays outside the
-// dashboard API key gate).
-app.use("/api/webhooks", webhooksRouter);
-app.use("/api", webhooksRouter); // exposes GET /api/unsubscribe/:token at the documented path
+export interface LeadEvent {
+  id: string;
+  lead_id: string | null;
+  type: EventType;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
 
-// Dashboard REST API — all protected by a shared API key.
-app.use("/api/kpis", requireApiKey, kpisRouter);
-app.use("/api/pipeline", requireApiKey, pipelineRouter);
-app.use("/api/conversations", requireApiKey, conversationsRouter);
-app.use("/api/activity", requireApiKey, activityRouter);
+/** Output contract for the reply-classification model. */
+export interface ClassificationResult {
+  intent:
+    | "interested"
+    | "not_interested"
+    | "question"
+    | "meeting_request"
+    | "unsubscribe"
+    | "auto_reply"
+    | "other";
+  suggested_reply: string;
+  confidence: number; // 0-1
+}
 
-app.use(errorHandler);
+export interface GooglePlaceSummary {
+  place_id: string;
+  name: string;
+}
 
-app.listen(env.PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`LeadFinder AI backend listening on port ${env.PORT} (${env.NODE_ENV})`);
-  startScheduler();
-});
+export interface GooglePlaceDetails {
+  place_id: string;
+  name: string;
+  formatted_address?: string;
+  formatted_phone_number?: string;
+  international_phone_number?: string;
+  website?: string;
+  // NOTE: Google Places does NOT return a business email address — see
+  // src/lib/places.ts for how we handle that gap.
+}
